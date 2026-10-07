@@ -1,2 +1,2 @@
 # MyRobot
-The template repository for the COGS 300 lab robots. You can edit this template as much as you want.
+Copy of the template repository provided by Paul Bucci for COGS300 - go Team Brubru!
