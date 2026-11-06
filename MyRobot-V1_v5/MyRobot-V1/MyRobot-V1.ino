@@ -1,0 +1,117 @@
+// MyRobot-V1.ino
+// This file must be named the same as your sketch folder
+//
+// Remote control over Serial. The Processing sketch (MyRobotControl.pde)
+// sends lines like "W 200\n" = <command letter> <space> <speed 0-255>.
+//
+//   W = forward            S = backward
+//   A = spin left          D = spin right        (in place)
+//   Q = forward + left     E = forward + right   (turn while driving)
+//   Z = backward + left    C = backward + right
+//   X = stop
+
+int enA = 9;   // Enable pin for Motor A (RIGHT) - must be a PWM-capable pin         !!! NOTE!! CHANGE PINS ACCORDING TO OUR WIRING!!!
+int in1 = 12;   // Direction control pin 1 for Motor A
+int in2 = 13;   // Direction control pin 2 for Motor A
+int enB = 10;   // Enable pin for Motor B (LEFT) - must be a PWM-capable pin
+int in3 = 4;   // Direction control pin 3 for Motor B
+int in4 = 5;   // Direction control pin 4 for Motor B
+int trigR = A3; // Trigger pin for ultrasonic sensor R
+int echoR = A4; // Echo pin for ultrasonic sensor R
+int trigF = A0; // Trigger pin for ultrasonic sensor F
+int echoF = A1; // Echo pin for ultrasonic sensor F
+int followSpeed = 0;
+
+const int MIN_PWM = 80;   // lowest PWM that actually moves the robot (below this the motors only hum).
+                           // Used by Motor.ino and Encoder.ino. Lowest command speed should be >= this.
+
+const int TURN_AMOUNT = 120;                    // how much the inside wheel slows when turning. With MIN_PWM = 100, an inside wheel that
+                                                // would fall below 100 just stops (pivot); at speed >= 220 it keeps arcing
+const unsigned long COMMAND_TIMEOUT_MS = 500;   // safety: stop if no command arrives for this long
+
+unsigned long lastCommandTime = 0;
+char lastCommand = 'X';
+
+void setup() {
+    pinMode(enA, OUTPUT);
+    pinMode(in1, OUTPUT);
+    pinMode(in2, OUTPUT);
+    pinMode(enB, OUTPUT);
+    pinMode(in3, OUTPUT);
+    pinMode(in4, OUTPUT);
+    pinMode(trigR, OUTPUT);
+    pinMode(echoR, INPUT);
+    pinMode(trigF, OUTPUT);
+    pinMode(echoF, INPUT);
+    setupEncoders();
+    Serial.begin(115200);
+    Serial.setTimeout(20);   // don't wait long for a full line
+    stopRobot();
+    logInfo(Serial, "Ready for commands");
+}
+
+void loop() {
+    updateEncoders();
+    // Read one full command line if available
+    if (Serial.available() > 0) {
+        String line = Serial.readStringUntil('\n');
+        line.trim();
+        if (line.length() > 0) {
+            char cmd = toupper(line.charAt(0));
+            int speed = constrain(line.substring(1).toInt(), 0, 255);
+            handleCommand(cmd, speed);
+            lastCommandTime = millis();
+        }
+    }
+
+    // Failsafe: if the controller disconnects or stops sending, stop the robot
+    if (lastCommand != 'X' && millis() - lastCommandTime > COMMAND_TIMEOUT_MS) {
+        stopRobot();
+        lastCommand = 'X';
+        logError(Serial, "Command timeout - stopped");
+    }
+
+    if (lastCommand == 'F') {
+        straightFollow(followSpeed);
+    }
+
+    if (lastCommand == 'M') {
+        followMe(followSpeed);
+    }
+
+    if (lastCommand == 'W') driveStraight(followSpeed, +1);
+    if (lastCommand == 'S') driveStraight(followSpeed, -1);
+
+    static unsigned long lastRawPrint = 0;
+    if (millis() - lastRawPrint > 200) {
+        lastRawPrint = millis();
+        printRawEncoders();
+    }
+}
+
+void handleCommand(char cmd, int speed) {
+    if (speed > 0 && speed < MIN_PWM) speed = MIN_PWM;   // anything weaker can't move the robot
+    // Only log when the command changes (otherwise the heartbeat spams Serial)
+    Serial.print("cmd=");  Serial.print(cmd);  Serial.print(" speed=");  Serial.println(speed);
+    if (cmd != lastCommand) {
+        logInfo(Serial, "Command received");
+        if (cmd == 'W' || cmd == 'S') resetStraight();
+        if (cmd == 'F') resetWallFollow();
+        lastCommand = cmd;
+    }
+
+    switch (cmd) {
+        case 'W': followSpeed = speed;                     break;
+        case 'S': followSpeed = speed;                     break;
+        case 'A': spinLeft(speed);                         break;
+        case 'D': spinRight(speed);                        break;
+        case 'Q': turnLeft(speed, TURN_AMOUNT);            break;
+        case 'E': turnRight(speed, TURN_AMOUNT);           break;
+        case 'Z': turnLeftBackward(speed, TURN_AMOUNT);    break;
+        case 'C': turnRightBackward(speed, TURN_AMOUNT);   break;
+        case 'X': stopRobot();                             break;
+        case 'F': followSpeed = speed;                     break;
+        case 'M': followSpeed = speed;                     break;  
+        default:  stopRobot();                             break;
+    }
+}
